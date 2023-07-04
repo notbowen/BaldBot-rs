@@ -83,14 +83,16 @@ async fn main() {
     std::env::set_var("RUST_LOG", "bald_bot=debug");
     pretty_env_logger::init();
 
-    // Retrieve token and start client
+    // Retrieve token
     let token =
         std::env::var("BALD_BOT_TOKEN").expect("Expected bot's token to be found in env vars!");
 
     #[cfg(debug_assertions)]
     let token = std::env::var("BALD_BOT_DEV_TOKEN").expect("Expected dev token to be in env vars");
 
-    let mut client = Client::builder(token, GatewayIntents::GUILD_MEMBERS)
+    // Define intents and start client
+    let intents = GatewayIntents::GUILD_MEMBERS;
+    let mut client = Client::builder(token, intents)
         .event_handler(BaldHandler)
         .await
         .expect("Able to create client");
