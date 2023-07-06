@@ -100,7 +100,7 @@ impl EventHandler for BaldHandler {
 #[tokio::main]
 async fn main() {
     // Initialise logging
-    std::env::set_var("RUST_LOG", "bald_bot=debug");
+    std::env::set_var("RUST_LOG", "bald_bot=info");
     pretty_env_logger::init();
 
     // Retrieve token

@@ -1,13 +1,20 @@
+use std::io::{Read, Write};
+use std::{collections::HashMap, fs::File};
+
 use rand::{self, Rng};
+use serde::Deserialize;
+
 use serenity::model::prelude::Message;
 
 struct SwearWord {
+    display_name: &'static str,
     words: &'static [&'static str],
     responses: &'static [&'static str],
 }
 
 const BANNED_WORDS: &[SwearWord] = &[
     SwearWord {
+        display_name: "F Word",
         words: &["fuck", "fucking", "fucker"],
         responses: &[
             "Orh hor say F word I tell mummy",
@@ -16,6 +23,7 @@ const BANNED_WORDS: &[SwearWord] = &[
     },
 
     SwearWord {
+        display_name: "N Word",
         words: &["neger", "negro", "neeger", "nigger", "nigga", "黑鬼", "hei gui", "niger"],
         responses: &[
             "Orh hor say N word I tell mummy",
@@ -29,6 +37,7 @@ const BANNED_WORDS: &[SwearWord] = &[
     },
 
     SwearWord {
+        display_name: "Chink word",
         words: &["chink", "cheenk"],
         responses: &[
             "Chink, a English-language ethnic slur usually referring to a person of Chinese descent.",
@@ -39,6 +48,7 @@ const BANNED_WORDS: &[SwearWord] = &[
     },
 
     SwearWord {
+        display_name: "Fat word",
         words: &["royce", "fat", "obese", "chunky", "thorston", "kamal"],
         responses: &[
             "little fat fuck", "royce kinda gay", "i love physics",
@@ -48,6 +58,7 @@ const BANNED_WORDS: &[SwearWord] = &[
     },
 
     SwearWord {
+        display_name: "Tryhard",
         words: &["tryhard", "aidan", "bill", "min qi", "minqi", "4a1"],
         responses: &[
             "eww tryhard go and study medicine lah",
@@ -61,20 +72,61 @@ pub async fn get_swear_response(message_content: String) -> Option<String> {
     let mut content = message_content;
     content.retain(|c| !c.is_whitespace());
 
-    debug!("Looking for swears...");
-
     // Loop through swear words and return selected choice
     for swear_word in BANNED_WORDS {
         for word in swear_word.words {
             if content.contains(word) {
-                debug!("Found swear word, {}!", word);
+                // Generate response
                 let response = swear_word.responses
                     [rand::thread_rng().gen_range(0..swear_word.responses.len())];
-                return Some(response.to_string());
+
+                // Get word count
+                let word_count = increment_word_count(swear_word.display_name).await;
+
+                // Return response
+                return Some(format!(
+                    "{}\n{} count: {}",
+                    response, swear_word.display_name, word_count
+                ));
             }
         }
     }
 
     // No swear words were found
     None
+}
+
+/// Gets the word count from a JSON file, increments it, saves it and returns the new value
+///
+/// # Arguments
+/// * `display_name` - The display name of the swear word
+async fn increment_word_count(display_name: &str) -> u32 {
+    // Open file and load data, else create the file if not found
+    let mut file = match File::open("word_count.json") {
+        Ok(file) => file,
+        Err(_) => {
+            let mut file = File::create("word_count.json").unwrap();
+            file.write_all("{}".as_bytes()).unwrap();
+            File::open("word_count.json").unwrap()
+        }
+    };
+    let mut data = String::new();
+    file.read_to_string(&mut data).unwrap();
+
+    let mut data: HashMap<String, u32> =
+        serde_json::from_str(&data).expect("Word count JSON data to be well formatted");
+
+    // Find the display_name and increment it, else init value to 1
+    let new_count = match data.get(display_name) {
+        Some(count) => count + 1,
+        None => 1,
+    };
+
+    // Save new data
+    data.insert(display_name.to_string(), new_count);
+    let data = serde_json::to_string(&data).unwrap();
+    let mut file = File::create("word_count.json").unwrap();
+    file.write_all(data.as_bytes()).unwrap();
+
+    new_count
 }
