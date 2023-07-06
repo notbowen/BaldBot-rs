@@ -5,15 +5,17 @@ extern crate log;
 extern crate pretty_env_logger;
 
 mod commands;
+mod utils;
 
 use serenity::async_trait;
 use serenity::model::application::command::Command;
 use serenity::model::application::interaction::{Interaction, InteractionResponseType};
 use serenity::model::gateway::Ready;
 use serenity::model::id::GuildId;
-use serenity::model::prelude::{ChannelId, GuildChannel, Member};
+use serenity::model::prelude::{ChannelId, GuildChannel, Member, Message};
 use serenity::model::webhook::WebhookType;
 use serenity::prelude::*;
+use utils::swear_detector;
 
 struct BaldHandler;
 
@@ -75,6 +77,24 @@ impl EventHandler for BaldHandler {
             error!("Unable to send welcome message: {}", why);
         }
     }
+
+    async fn message(&self, ctx: Context, message: Message) {
+        // Skip if message was sent by a bot
+        if message.author.bot {
+            return;
+        }
+
+        // Check and respond if there is swear word
+        if let Some(response) = utils::swear_detector::get_swear_response(message.content).await {
+            if let Err(why) = message
+                .channel_id
+                .send_message(&ctx.http, |message| message.content(response))
+                .await
+            {
+                error!("Unable to respond to swear word: {}", why);
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -91,7 +111,7 @@ async fn main() {
     let token = std::env::var("BALD_BOT_DEV_TOKEN").expect("Expected dev token to be in env vars");
 
     // Define intents and start client
-    let intents = GatewayIntents::GUILD_MEMBERS;
+    let intents = GatewayIntents::all();
     let mut client = Client::builder(token, intents)
         .event_handler(BaldHandler)
         .await
