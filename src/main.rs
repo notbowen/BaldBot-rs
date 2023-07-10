@@ -47,9 +47,11 @@ async fn handle_event<'a>(ctx: &serenity::Context, event: &Event<'a>) -> Result<
                 }
             }
         }
+
         Event::GuildMemberAddition { new_member } => {
             debug!("User `{}` joined!", new_member.user.name);
 
+            // Welcome a user in the Welcome channel of BaldSMP
             let channel_id = serenity::ChannelId(792718122226417704);
 
             if let Err(why) = channel_id
@@ -61,7 +63,23 @@ async fn handle_event<'a>(ctx: &serenity::Context, event: &Event<'a>) -> Result<
                 error!("Unable to send welcome message: {}", why);
             }
 
-            // TODO: Add role to user
+            // Add role to user
+            if let Err(why) = ctx
+                .http
+                .add_member_role(
+                    791588775456800798,
+                    *new_member.user.id.as_u64(),
+                    791594597577916426,
+                    None,
+                )
+                .await
+            {
+                error!(
+                    "Unable to add role to user {}: {}",
+                    new_member.user.name, why
+                );
+            }
+            debug!("Added Bald role to {}", new_member.user.name);
         }
         _ => (),
     }
