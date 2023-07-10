@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 #[macro_use]
 extern crate log;
 extern crate pretty_env_logger;
@@ -7,117 +5,101 @@ extern crate pretty_env_logger;
 mod commands;
 mod utils;
 
-use serenity::async_trait;
-use serenity::model::application::command::Command;
-use serenity::model::application::interaction::{Interaction, InteractionResponseType};
-use serenity::model::gateway::Ready;
-use serenity::model::id::GuildId;
-use serenity::model::prelude::{ChannelId, GuildChannel, Member, Message};
-use serenity::model::webhook::WebhookType;
-use serenity::prelude::*;
-use utils::swear_detector;
+use poise::event::Event;
+use poise::serenity_prelude::{self as serenity, Mentionable};
 
-struct BaldHandler;
+type Error = Box<dyn std::error::Error + Send + Sync>;
+type Context<'a> = poise::Context<'a, Data, Error>;
 
-#[async_trait]
-impl EventHandler for BaldHandler {
-    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        if let Interaction::ApplicationCommand(command) = interaction {
-            debug!("Received command: /{}", command.data.name);
+pub struct Data;
 
-            let content = match command.data.name.as_str() {
-                "ping" => commands::ping::run(&command.data.options),
-                _ => "Not implemented :|".to_string(),
-            };
-
-            if let Err(why) = command
-                .create_interaction_response(&ctx.http, |response| {
-                    response
-                        .kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|message| message.content(content))
-                })
-                .await
-            {
-                error!("Couldn't respond to slash command: {}", why);
-            }
+async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
+    match error {
+        poise::FrameworkError::Setup { error, .. } => error!("Failed to start bot: {:?}", error),
+        poise::FrameworkError::Command { error, ctx } => {
+            error!("Error in command `{}`: {:?}", ctx.command().name, error,);
         }
-    }
-
-    async fn ready(&self, ctx: Context, ready: Ready) {
-        info!("Logged in as: {}", ready.user.name);
-
-        if cfg!(debug_assertions) {
-            let guild_id = GuildId(791588775456800798);
-            let commands = GuildId::set_application_commands(&guild_id, &ctx.http, |commands| {
-                commands.create_application_command(|command| commands::ping::register(command))
-            })
-            .await;
-
-            info!("Initialised guild slash commands");
-        } else {
-            let commands = Command::create_global_application_command(&ctx.http, |command| {
-                commands::ping::register(command)
-            })
-            .await;
-
-            info!("Initialised global commands");
-        }
-    }
-
-    async fn guild_member_addition(&self, ctx: Context, member: Member) {
-        debug!("User `{}` joined!", member.user.name);
-        let channel_id = ChannelId(792718122226417704);
-
-        if let Err(why) = channel_id
-            .send_message(&ctx.http, |message| {
-                message.content(format!("Welcome to the BaldSMP, {}", member.mention()))
-            })
-            .await
-        {
-            error!("Unable to send welcome message: {}", why);
-        }
-    }
-
-    async fn message(&self, ctx: Context, message: Message) {
-        // Skip if message was sent by a bot
-        if message.author.bot {
-            return;
-        }
-
-        // Check and respond if there is swear word
-        if let Some(response) = utils::swear_detector::get_swear_response(message.content).await {
-            if let Err(why) = message
-                .channel_id
-                .send_message(&ctx.http, |message| message.content(response))
-                .await
-            {
-                error!("Unable to respond to swear word: {}", why);
+        error => {
+            if let Err(e) = poise::builtins::on_error(error).await {
+                error!("Error while handling error: {}", e)
             }
         }
     }
 }
 
+async fn handle_event<'a>(ctx: &serenity::Context, event: &Event<'a>) -> Result<(), Error> {
+    match event {
+        Event::Message { new_message } => {
+            if new_message.author.bot {
+                return Ok(());
+            }
+
+            // Check and respond if there is swear word
+            if let Some(response) =
+                utils::swear_detector::get_swear_response(new_message.content.clone()).await
+            {
+                if let Err(why) = new_message
+                    .channel_id
+                    .send_message(&ctx.http, |message| message.content(response))
+                    .await
+                {
+                    error!("Unable to respond to swear word: {}", why);
+                }
+            }
+        }
+        Event::GuildMemberAddition { new_member } => {
+            debug!("User `{}` joined!", new_member.user.name);
+
+            let channel_id = serenity::ChannelId(792718122226417704);
+
+            if let Err(why) = channel_id
+                .send_message(&ctx.http, |message| {
+                    message.content(format!("Welcome to the BaldSMP, {}", new_member.mention()))
+                })
+                .await
+            {
+                error!("Unable to send welcome message: {}", why);
+            }
+
+            // TODO: Add role to user
+        }
+        _ => (),
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     // Initialise logging
-    std::env::set_var("RUST_LOG", "bald_bot=info");
+    #[cfg(debug_assertions)]
+    std::env::set_var("RUST_LOG", "bald_bot=debug");
     pretty_env_logger::init();
 
     // Retrieve token
     let token =
         std::env::var("BALD_BOT_TOKEN").expect("Expected bot's token to be found in env vars!");
 
-    #[cfg(debug_assertions)]
-    let token = std::env::var("BALD_BOT_DEV_TOKEN").expect("Expected dev token to be in env vars");
+    // Init poise
+    let options = poise::FrameworkOptions {
+        commands: vec![commands::ping()],
+        on_error: |error| Box::pin(on_error(error)),
+        event_handler: |ctx, event, _framework, _data| Box::pin(handle_event(ctx, event)),
+        ..Default::default()
+    };
 
-    // Define intents and start client
-    let intents = GatewayIntents::all();
-    let mut client = Client::builder(token, intents)
-        .event_handler(BaldHandler)
+    poise::Framework::builder()
+        .token(token)
+        .setup(move |ctx, _ready, framework| {
+            Box::pin(async move {
+                info!("Logged in as: {}", _ready.user.name);
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(Data {})
+            })
+        })
+        .options(options)
+        .intents(serenity::GatewayIntents::all())
+        .run()
         .await
-        .expect("Able to create client");
-
-    if let Err(why) = client.start().await {
-        error!("Client Error: {:?}", why);
-    }
+        .unwrap();
 }

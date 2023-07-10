@@ -1,10 +1,6 @@
+use rand::{self, Rng};
 use std::io::{Read, Write};
 use std::{collections::HashMap, fs::File};
-
-use rand::{self, Rng};
-use serde::Deserialize;
-
-use serenity::model::prelude::Message;
 
 struct SwearWord {
     display_name: &'static str,
